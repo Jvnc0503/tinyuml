@@ -23,6 +23,7 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.event.ActionEvent;
@@ -34,6 +35,7 @@ import java.awt.geom.Dimension2D;
 import java.awt.geom.Point2D;
 import java.io.IOException;
 import java.io.ObjectInputStream;
+import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -41,7 +43,10 @@ import java.util.List;
 import javax.swing.AbstractAction;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
+import javax.swing.JOptionPane;
+import javax.swing.JViewport;
 import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
 import javax.swing.event.UndoableEditEvent;
 import javax.swing.event.UndoableEditListener;
 import javax.swing.undo.UndoManager;
@@ -66,6 +71,7 @@ import org.tinyuml.model.RelationEndType;
 import org.tinyuml.model.UmlClass;
 import org.tinyuml.ui.diagram.commands.ConvertConnectionTypeCommand;
 import org.tinyuml.util.AppCommandListener;
+import org.tinyuml.util.ApplicationResources;
 import org.tinyuml.ui.diagram.commands.DeleteElementCommand;
 import org.tinyuml.ui.diagram.commands.MoveElementCommand;
 import org.tinyuml.ui.diagram.commands.PasteElementCommand;
@@ -105,7 +111,8 @@ DiagramEditorNotification, DiagramOperations, NodeChangeListener {
   private transient LineHandler lineHandler;
   private transient List<UndoableEditListener> editListeners =
     new ArrayList<UndoableEditListener>();
-  private transient Scaling scaling = Scaling.SCALING_100;
+  private transient double scaleFactor = 1.0;
+  private transient boolean fitToWindow;
 
   /**
    * Reset the transient values for serialization.
@@ -129,7 +136,8 @@ DiagramEditorNotification, DiagramOperations, NodeChangeListener {
     lineHandler = new LineHandler(this);
     editorMode = selectionHandler;
     mouseEvent = new EditorMouseEvent();
-    scaling = Scaling.SCALING_100;
+    scaleFactor = 1.0;
+    fitToWindow = false;
   }
 
   /**
@@ -204,6 +212,10 @@ DiagramEditorNotification, DiagramOperations, NodeChangeListener {
    * This also influences the scroll pane which the component is contained in.
    */
   private void setToDiagramSize() {
+    if (fitToWindow) {
+      fitDiagramToWindow();
+      return;
+    }
     setPreferredSize(new Dimension(
       (int) (diagram.getSize().getWidth() + MARGIN_RIGHT + MARGIN_LEFT),
       (int) (diagram.getSize().getHeight() + MARGIN_BOTTOM + MARGIN_TOP)));
@@ -251,7 +263,30 @@ DiagramEditorNotification, DiagramOperations, NodeChangeListener {
    */
   public void deleteSelection() {
     Collection<DiagramElement> elements = getSelectedElements();
+    if (elements.isEmpty()) return;
+    if (elements.size() > 1 && !confirmDeleteMultiple(elements.size())) return;
     execute(new DeleteElementCommand(this, elements));
+  }
+
+  /**
+   * Asks for confirmation before deleting a multi-element selection.
+   * @param elementCount the number of selected elements
+   * @return true if the user confirmed the deletion
+   */
+  private boolean confirmDeleteMultiple(int elementCount) {
+    ApplicationResources resources = ApplicationResources.getInstance();
+    String message = MessageFormat.format(
+      resources.getString("dialog.delete.multiple.message"),
+      new Object[] { Integer.valueOf(elementCount) });
+    String[] options = {
+      resources.getString("dialog.delete.multiple.confirm"),
+      resources.getString("stdcaption.cancel")
+    };
+    int choice = JOptionPane.showOptionDialog(frame, message,
+      resources.getString("dialog.delete.multiple.title"),
+      JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null,
+      options, options[1]);
+    return choice == 0;
   }
   /**
    * Pastes into this diagram the handed Elements
@@ -328,7 +363,7 @@ DiagramEditorNotification, DiagramOperations, NodeChangeListener {
   private void paintComponent(Graphics g, Rectangle bounds, boolean toScreen) {
     Graphics2D g2d = (Graphics2D) g;
     setRenderingHints(g2d);
-    if (scaling.getScaleFactor() != 1.0) {
+    if (scaleFactor != 1.0) {
       g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
         RenderingHints.VALUE_INTERPOLATION_BILINEAR);
       g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
@@ -337,15 +372,15 @@ DiagramEditorNotification, DiagramOperations, NodeChangeListener {
 
     boolean gridVisible = diagram.isGridVisible();
     Color background = Color.GRAY;
-    if (toScreen) {
-      // Scaling is only interesting if rendering to screen
-      scaleDiagram(g2d);
-    } else {
+    if (!toScreen) {
       diagram.setGridVisible(false);
       background = Color.WHITE;
     }
     clearScreen(g, bounds, background);
-    drawingContext.setGraphics2D(g2d, bounds);
+    if (toScreen) {
+      scaleDiagram(g2d);
+    }
+    drawingContext.setGraphics2D(g2d, getDrawingBounds(bounds, toScreen));
     diagram.draw(drawingContext);
     // Draw user interface specific elements (e.g. selections)
     if (toScreen) {
@@ -373,11 +408,6 @@ DiagramEditorNotification, DiagramOperations, NodeChangeListener {
   private void restoreRenderingHints(Graphics2D g2d) {
     g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
       RenderingHints.VALUE_TEXT_ANTIALIAS_DEFAULT);
-    /*
-    if (scaling.getScaleFactor() != 1.0) {
-      g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
-        RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-    }*/
     g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
       RenderingHints.VALUE_ANTIALIAS_DEFAULT);
   }
@@ -398,8 +428,22 @@ DiagramEditorNotification, DiagramOperations, NodeChangeListener {
    * @param g2d the Graphics2D object
    */
   private void scaleDiagram(Graphics2D g2d) {
-    double scaleFactor = scaling.getScaleFactor();
     g2d.scale(scaleFactor, scaleFactor);
+  }
+
+  /**
+   * Maps the screen clip rectangle back to diagram coordinates.
+   * @param bounds the screen clip rectangle
+   * @param toScreen true if rendered to the screen
+   * @return the clip rectangle in diagram coordinates
+   */
+  private Rectangle getDrawingBounds(Rectangle bounds, boolean toScreen) {
+    if (!toScreen || scaleFactor == 1.0) return bounds;
+    int x1 = (int) Math.floor(bounds.x / scaleFactor);
+    int y1 = (int) Math.floor(bounds.y / scaleFactor);
+    int x2 = (int) Math.ceil((bounds.x + bounds.width) / scaleFactor);
+    int y2 = (int) Math.ceil((bounds.y + bounds.height) / scaleFactor);
+    return new Rectangle(x1, y1, x2 - x1, y2 - y1);
   }
 
   // ************************************************************************
@@ -516,7 +560,7 @@ DiagramEditorNotification, DiagramOperations, NodeChangeListener {
    * @return the converted event
    */
   private EditorMouseEvent convertMouseEvent(MouseEvent e) {
-    mouseEvent.setMouseEvent(e, scaling);
+    mouseEvent.setMouseEvent(e, scaleFactor);
     return mouseEvent;
   }
 
@@ -592,7 +636,35 @@ DiagramEditorNotification, DiagramOperations, NodeChangeListener {
    * @param aScaling a Scaling object
    */
   public void setScaling(Scaling aScaling) {
-    scaling = aScaling;
+    if (fitToWindow) {
+      fitToWindow = false;
+      setToDiagramSize();
+    }
+    scaleFactor = aScaling.getScaleFactor();
+    repaint();
+  }
+
+  /**
+   * Scales the diagram so the full canvas fits in the visible work area.
+   * Diagram elements are only transformed while rendering; their model
+   * positions and dimensions remain unchanged.
+   */
+  public void fitDiagramToWindow() {
+    JViewport viewport = (JViewport)
+      SwingUtilities.getAncestorOfClass(JViewport.class, this);
+    Dimension viewSize = viewport == null ? getSize() :
+      viewport.getExtentSize();
+    if (viewSize.width <= 0 || viewSize.height <= 0) return;
+
+    Dimension canvasSize = getTotalCanvasSize();
+    if (canvasSize.width <= 0 || canvasSize.height <= 0) return;
+
+    fitToWindow = true;
+    scaleFactor = Math.min((viewSize.width * 0.95) / canvasSize.width,
+      (viewSize.height * 0.95) / canvasSize.height);
+    setPreferredSize(viewSize);
+    revalidate();
+    if (viewport != null) viewport.setViewPosition(new Point(0, 0));
     repaint();
   }
 

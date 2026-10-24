@@ -70,4 +70,19 @@ public class EditorMouseEventTest extends TestCase {
     assertTrue(evt.isMainButton());
     assertEquals(event2, evt.getMouseEvent());
   }
+
+  /**
+   * Tests coordinate mapping with a scale that is not a preset zoom value.
+   */
+  public void testArbitraryScaleFactor() {
+    Component comp = new JLabel();
+    MouseEvent event = new MouseEvent(comp, MouseEvent.MOUSE_MOVED,
+      System.currentTimeMillis(), 0, 80, 40, 0, false);
+    EditorMouseEvent evt = new EditorMouseEvent();
+
+    evt.setMouseEvent(event, 0.5);
+
+    assertEquals(160.0, evt.getX(), EPS);
+    assertEquals(80.0, evt.getY(), EPS);
+  }
 }

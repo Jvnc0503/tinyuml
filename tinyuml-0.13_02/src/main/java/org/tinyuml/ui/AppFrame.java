@@ -23,6 +23,7 @@ import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Desktop;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
@@ -33,6 +34,7 @@ import java.net.URISyntaxException;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -46,9 +48,13 @@ import javax.swing.JTabbedPane;
 import javax.swing.JToolBar;
 import javax.swing.SwingUtilities;
 import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.event.ChangeEvent;
+import javax.swing.event.ChangeListener;
 import org.tinyuml.draw.Label;
 import org.tinyuml.draw.DiagramElement;
 import org.tinyuml.draw.LabelChangeListener;
+import org.tinyuml.draw.LabelSource;
+import org.tinyuml.draw.Connection;
 import org.tinyuml.model.UmlModel;
 import org.tinyuml.util.AppCommandListener;
 import org.tinyuml.umldraw.structure.StructureDiagram;
@@ -63,6 +69,11 @@ import org.tinyuml.ui.diagram.EditorStateListener;
 import org.tinyuml.ui.diagram.SelectionListener;
 import org.tinyuml.util.ApplicationResources;
 import org.tinyuml.util.MethodCall;
+import org.tinyuml.umldraw.shared.NoteElement;
+import org.tinyuml.umldraw.shared.UmlDiagramElement;
+import org.tinyuml.umldraw.structure.ClassElement;
+import org.tinyuml.umldraw.structure.ComponentElement;
+import org.tinyuml.umldraw.structure.PackageElement;
 
 /**
  * This class implements the Application frame. The top-level UI elements are
@@ -79,6 +90,9 @@ implements EditorStateListener, AppCommandListener, SelectionListener {
 
   private JTabbedPane tabbedPane;
   private JLabel coordLabel = new JLabel("    ");
+  private JLabel itemCountLabel = new JLabel("    ");
+  private JLabel selectionInfoLabel = new JLabel("    ");
+  private JLabel selectionCountLabel = new JLabel("    ");
   private JLabel memLabel = new JLabel("    ");
   private UmlModel umlModel;
   private DiagramEditor currentEditor;
@@ -182,6 +196,15 @@ implements EditorStateListener, AppCommandListener, SelectionListener {
   private JTabbedPane createEditorArea() {
     tabbedPane = new JTabbedPane();
     tabbedPane.setPreferredSize(new Dimension(800, 600));
+    tabbedPane.addChangeListener(new ChangeListener() {
+      public void stateChanged(ChangeEvent event) {
+        int selectedIndex = tabbedPane.getSelectedIndex();
+        if (selectedIndex >= 0 && selectedIndex < diagramEditors.size()) {
+          currentEditor = diagramEditors.get(selectedIndex);
+          updateItemCountLabel();
+        }
+      }
+    });
     return tabbedPane;
   }
 
@@ -192,6 +215,7 @@ implements EditorStateListener, AppCommandListener, SelectionListener {
    */
   private void createEditor(StructureDiagram diagram) {
     currentEditor = new DiagramEditor(this, diagram);
+    diagramEditors.add(currentEditor);
     currentEditor.addEditorStateListener(this);
     currentEditor.addSelectionListener(this);
     currentEditor.addAppCommandListener(editorDispatcher);
@@ -206,6 +230,7 @@ implements EditorStateListener, AppCommandListener, SelectionListener {
     editorPanel.add(spane, BorderLayout.CENTER);
     editorPanel.add(toolbar, BorderLayout.NORTH);
     final Component comp = tabbedPane.add(diagram.getLabelText(), editorPanel);
+    updateItemCountLabel();
     diagram.addNameLabelChangeListener(new LabelChangeListener() {
       /** {@inheritDoc} */
       public void labelTextChanged(Label label) {
@@ -240,7 +265,12 @@ implements EditorStateListener, AppCommandListener, SelectionListener {
    */
   private void installStatusbar() {
     JPanel statusbar = new JPanel(new BorderLayout());
+    JPanel diagramStatus = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
+    diagramStatus.add(itemCountLabel);
+    diagramStatus.add(selectionInfoLabel);
+    diagramStatus.add(selectionCountLabel);
     statusbar.add(coordLabel, BorderLayout.WEST);
+    statusbar.add(diagramStatus, BorderLayout.CENTER);
     statusbar.add(memLabel, BorderLayout.EAST);
     getContentPane().add(statusbar, BorderLayout.SOUTH);
   }
@@ -284,6 +314,7 @@ implements EditorStateListener, AppCommandListener, SelectionListener {
     // spring loading is implemented here
     staticToolbarManager.doClick("SELECT_MODE");
     updateMenuAndToolbars(editor);
+    if (editor == currentEditor) updateItemCountLabel();
   }
 
   /**
@@ -291,6 +322,90 @@ implements EditorStateListener, AppCommandListener, SelectionListener {
    */
   public void elementRemoved(DiagramEditor editor) {
     updateMenuAndToolbars(editor);
+    if (editor == currentEditor) updateItemCountLabel();
+  }
+
+  /**
+   * Refreshes the status bar counts for the active editor.
+   */
+  private void updateItemCountLabel() {
+    if (currentEditor == null) {
+      itemCountLabel.setText("    ");
+      updateSelectionStatus();
+      return;
+    }
+    DiagramElementCounts counts =
+      DiagramElementCounts.count(currentEditor.getDiagram());
+    itemCountLabel.setText(String.format(
+      getResourceString("status.items.count"),
+      Integer.valueOf(counts.getTotal()),
+      Integer.valueOf(counts.getPackages()),
+      Integer.valueOf(counts.getClasses()),
+      Integer.valueOf(counts.getComponents()),
+      Integer.valueOf(counts.getNotes())));
+    updateSelectionStatus();
+  }
+
+  /**
+   * Refreshes the selection information and count in the status bar.
+   */
+  private void updateSelectionStatus() {
+    if (currentEditor == null) {
+      selectionInfoLabel.setText(getResourceString("status.selection.none"));
+      selectionCountLabel.setText(String.format(
+        getResourceString("status.selection.count"), Integer.valueOf(0)));
+      return;
+    }
+
+    List<DiagramElement> selectedElements =
+      currentEditor.getSelectedElements();
+    int selectedCount = selectedElements.size();
+    if (selectedCount == 0) {
+      selectionInfoLabel.setText(getResourceString("status.selection.none"));
+    } else if (selectedCount == 1) {
+      selectionInfoLabel.setText(getSelectionDescription(
+        selectedElements.get(0)));
+    } else {
+      selectionInfoLabel.setText(String.format(
+        getResourceString("status.selection.multiple"),
+        Integer.valueOf(selectedCount)));
+    }
+    selectionCountLabel.setText(String.format(
+      getResourceString("status.selection.count"),
+      Integer.valueOf(selectedCount)));
+  }
+
+  /**
+   * Returns the selected element's category and name.
+   * @param element the selected diagram element
+   * @return the category and name
+   */
+  private String getSelectionDescription(DiagramElement element) {
+    String category = getResourceString("status.selection.element");
+    if (element instanceof PackageElement) {
+      category = getResourceString("status.category.package");
+    } else if (element instanceof ClassElement) {
+      category = getResourceString("status.category.class");
+    } else if (element instanceof ComponentElement) {
+      category = getResourceString("status.category.component");
+    } else if (element instanceof NoteElement) {
+      category = getResourceString("status.category.note");
+    } else if (element instanceof Connection) {
+      category = getResourceString("status.category.relation");
+    }
+
+    String name = null;
+    if (element instanceof LabelSource) {
+      name = ((LabelSource) element).getLabelText();
+    } else if (element instanceof UmlDiagramElement &&
+        ((UmlDiagramElement) element).getModelElement() != null) {
+      name = ((UmlDiagramElement) element).getModelElement().getName();
+    }
+    if (name == null || name.length() == 0) {
+      name = getResourceString("status.selection.unnamed");
+    }
+    return String.format(getResourceString("status.selection.description"),
+      category, name);
   }
 
   /**
@@ -314,6 +429,7 @@ implements EditorStateListener, AppCommandListener, SelectionListener {
    */
   public void selectionStateChanged() {
     boolean hasSelection = getCurrentEditor().getSelectedElements().size() > 0;
+    updateSelectionStatus();
    
     menumanager.enableMenuItem("CUT", hasSelection);
     menumanager.enableMenuItem("COPY", hasSelection);
@@ -423,6 +539,7 @@ implements EditorStateListener, AppCommandListener, SelectionListener {
       umlModel.addDiagram(diagram);
       diagram.setLabelText("Class diagram 1");
       tabbedPane.removeAll();
+      diagramEditors.clear();
       createEditor(diagram);
     }
   }
@@ -529,6 +646,7 @@ implements EditorStateListener, AppCommandListener, SelectionListener {
           currentFile = fileChooser.getSelectedFile();
           umlModel = ModelReader.getInstance().readModel(currentFile);
           tabbedPane.removeAll();
+          diagramEditors.clear();
           createEditor((StructureDiagram) umlModel.getDiagrams().get(0));
           updateFrameTitle();
         } catch (IOException ex) {
@@ -629,7 +747,7 @@ implements EditorStateListener, AppCommandListener, SelectionListener {
 	  if(hasSelection)
 	    lastCopiedElements = getCurrentEditor().getSelectedElements();
 
-	  //adicionalmente, hay que habilitar el botón PASTE!
+	  //adicionalmente, hay que habilitar el botï¿½n PASTE!
 	  menumanager.enableMenuItem("PASTE", hasSelection);
 	  toolbarmanager.enableButton("PASTE", hasSelection);
   }

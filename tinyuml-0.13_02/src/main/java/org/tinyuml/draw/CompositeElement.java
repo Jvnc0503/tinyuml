@@ -19,12 +19,20 @@
  */
 package org.tinyuml.draw;
 
+import java.util.List;
+
 /**
  * This interface defines a composite diagram element.
  * @author Wei-ju Wu
  * @version 1.0
  */
 public interface CompositeElement {
+
+  /**
+   * Returns the child elements contained by this element.
+   * @return the children
+   */
+  List<DiagramElement> getChildren();
 
   /**
    * Adds the specified child to this element.

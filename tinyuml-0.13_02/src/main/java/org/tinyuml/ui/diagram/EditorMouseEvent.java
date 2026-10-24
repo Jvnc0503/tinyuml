@@ -32,16 +32,25 @@ import org.tinyuml.draw.Scaling;
  */
 public class EditorMouseEvent {
   private MouseEvent event;
-  private Scaling scaling;
+  private double scaleFactor;
 
   /**
    * Sets the mouse event and current editor scaling.
    * @param anEvent the MouseEvent
-   * @param aScaling the Scaling
+   * @param aScaleFactor the scale factor
+   */
+  public void setMouseEvent(MouseEvent anEvent, double aScaleFactor) {
+    this.event = anEvent;
+    this.scaleFactor = aScaleFactor;
+  }
+
+  /**
+   * Sets the mouse event using one of the predefined scaling values.
+   * @param anEvent the MouseEvent
+   * @param aScaling the predefined scaling
    */
   public void setMouseEvent(MouseEvent anEvent, Scaling aScaling) {
-    this.event = anEvent;
-    this.scaling = aScaling;
+    setMouseEvent(anEvent, aScaling.getScaleFactor());
   }
 
   /**
@@ -55,8 +64,7 @@ public class EditorMouseEvent {
    * @return the x coordinate
    */
   public double getX() {
-    return scaling == Scaling.SCALING_100 ? event.getX() :
-      event.getX() / scaling.getScaleFactor();
+    return event.getX() / scaleFactor;
   }
 
   /**
@@ -64,8 +72,7 @@ public class EditorMouseEvent {
    * @return the y coordinate
    */
   public double getY() {
-    return scaling == Scaling.SCALING_100 ? event.getY() :
-      event.getY() / scaling.getScaleFactor();
+    return event.getY() / scaleFactor;
   }
 
   /**
