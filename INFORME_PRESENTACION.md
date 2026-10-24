@@ -78,10 +78,11 @@ heredados en archivos Java del proyecto.
 **Resultado de la ejecución enfocada:** 9 pruebas, 0 fallos, 0 errores.
 También se comprobó el formato del diff con `git diff --check`.
 
-La suite completa se había ejecutado en una validación anterior: 279 pruebas,
-con un fallo ajeno a estos cambios en
-`UmlClassTest.testInitial` (`expected:<0> but was:<3>`). No forma parte de los
-casos enfocados enumerados arriba.
+Como diagnóstico adicional, la primera ejecución completa encontró que
+`UmlClassTest.testInitial` recibía tres métodos en lugar de cero. La prueba
+`testClone` estaba modificando el prototipo global compartido. Se corrigió
+aislando esa prueba sobre una copia del prototipo. Después del ajuste, la suite
+completa terminó correctamente: **281 pruebas, 0 fallos, 0 errores**.
 
 ## Cierre
 
